@@ -63,6 +63,10 @@ IBaseFilter *pNullRenderer = NULL;
 IMediaControl *pMediaControl = NULL;
 char *pBuffer = NULL;
 
+// erohtar: Add with other variables
+int desired_width = 0;
+int desired_height = 0;
+
 void exit_message(const char* error_message, int error)
 {
 	// Print an error message
@@ -204,6 +208,17 @@ int main(int argc, char **argv)
 				device_number = 0;
 			}
 			else exit_message("Error: invalid device name", 1);
+		}
+		// erohtar: Added custom arguments
+		else if (strcmp(argv[n], "/width") == 0)
+		{
+		    if (++n < argc) desired_width = atoi(argv[n]);
+		    else exit_message("Error: invalid width specified", 1);
+		}
+		else if (strcmp(argv[n], "/height") == 0)
+		{
+		    if (++n < argc) desired_height = atoi(argv[n]);
+		    else exit_message("Error: invalid height specified", 1);
 		}
 		else
 		{
@@ -401,6 +416,35 @@ int main(int argc, char **argv)
 	hr = pGraph->AddFilter(pNullRenderer, L"NullRender");
 	if (hr != S_OK)
 		exit_message("Could not add Null Renderer to filter graph", 1);
+	
+	// erohtar: Add after creating the capture filter but before RenderStream
+	if (desired_width > 0 && desired_height > 0)
+	{
+	    IAMStreamConfig *pConfig = NULL;
+	    hr = pBuilder->FindInterface(
+	        &PIN_CATEGORY_CAPTURE,
+	        &MEDIATYPE_Video,
+	        pCap,
+	        IID_IAMStreamConfig,
+	        (void**)&pConfig
+	    );
+	    
+	    if (hr == S_OK)
+	    {
+	        AM_MEDIA_TYPE *pmt;
+	        VIDEO_STREAM_CONFIG_CAPS scc;
+	        hr = pConfig->GetFormat(&pmt);
+	        if (hr == S_OK)
+	        {
+	            VIDEOINFOHEADER *pvih = (VIDEOINFOHEADER*)pmt->pbFormat;
+	            pvih->bmiHeader.biWidth = desired_width;
+	            pvih->bmiHeader.biHeight = desired_height;
+	            hr = pConfig->SetFormat(pmt);
+	            DeleteMediaType(pmt);
+	        }
+	        pConfig->Release();
+	    }
+	}
 	
 	// Connect up the filter graph's capture stream
 	hr = pBuilder->RenderStream(
