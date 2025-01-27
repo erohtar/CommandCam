@@ -28,6 +28,9 @@
 // DirectShow header file
 #include <dshow.h>
 
+// erohtar
+#include <strmif.h>
+
 // This is a workaround for the missing header
 // file qedit.h which seems to be absent from the
 // Windows SDK versions 7.0 and 7.1.
@@ -67,30 +70,54 @@ char *pBuffer = NULL;
 int desired_width = 0;
 int desired_height = 0;
 
+// Function declarations
+void DeleteMediaType(AM_MEDIA_TYPE *pmt);
+void exit_message(const char* error_message, int error);
+
+void DeleteMediaType(AM_MEDIA_TYPE *pmt)
+{
+    if (pmt == NULL)
+        return;
+
+    if (pmt->cbFormat != 0)
+    {
+        CoTaskMemFree((PVOID)pmt->pbFormat);
+        pmt->cbFormat = 0;
+        pmt->pbFormat = NULL;
+    }
+    if (pmt->pUnk != NULL)
+    {
+        pmt->pUnk->Release();
+        pmt->pUnk = NULL;
+    }
+
+    CoTaskMemFree(pmt);
+}
+
 void exit_message(const char* error_message, int error)
 {
-	// Print an error message
-	fprintf(stderr, error_message);
-	fprintf(stderr, "\n");
-	
-	// Clean up DirectShow / COM stuff
-	if (pBuffer != NULL) delete[] pBuffer;
-	if (pMediaControl != NULL) pMediaControl->Release();	
-	if (pNullRenderer != NULL) pNullRenderer->Release();
-	if (pSampleGrabber != NULL) pSampleGrabber->Release();
-	if (pSampleGrabberFilter != NULL)
-			pSampleGrabberFilter->Release();
-	if (pCap != NULL) pCap->Release();
-	if (pBuilder != NULL) pBuilder->Release();
-	if (pGraph != NULL) pGraph->Release();
-	if (pPropBag != NULL) pPropBag->Release();
-	if (pMoniker != NULL) pMoniker->Release();
-	if (pEnum != NULL) pEnum->Release();
-	if (pDevEnum != NULL) pDevEnum->Release();
-	CoUninitialize();
-	
-	// Exit the program
-	exit(error);
+    // Print an error message
+    fprintf(stderr, error_message);
+    fprintf(stderr, "\n");
+    
+    // Clean up DirectShow / COM stuff
+    if (pBuffer != NULL) delete[] pBuffer;
+    if (pMediaControl != NULL) pMediaControl->Release();    
+    if (pNullRenderer != NULL) pNullRenderer->Release();
+    if (pSampleGrabber != NULL) pSampleGrabber->Release();
+    if (pSampleGrabberFilter != NULL)
+            pSampleGrabberFilter->Release();
+    if (pCap != NULL) pCap->Release();
+    if (pBuilder != NULL) pBuilder->Release();
+    if (pGraph != NULL) pGraph->Release();
+    if (pPropBag != NULL) pPropBag->Release();
+    if (pMoniker != NULL) pMoniker->Release();
+    if (pEnum != NULL) pEnum->Release();
+    if (pDevEnum != NULL) pDevEnum->Release();
+    CoUninitialize();
+    
+    // Exit the program
+    exit(error);
 }
 
 int main(int argc, char **argv)
@@ -417,34 +444,65 @@ int main(int argc, char **argv)
 	if (hr != S_OK)
 		exit_message("Could not add Null Renderer to filter graph", 1);
 	
+	
+	
 	// erohtar: Add after creating the capture filter but before RenderStream
-	if (desired_width > 0 && desired_height > 0)
-	{
-	    IAMStreamConfig *pConfig = NULL;
-	    hr = pBuilder->FindInterface(
-	        &PIN_CATEGORY_CAPTURE,
-	        &MEDIATYPE_Video,
-	        pCap,
-	        IID_IAMStreamConfig,
-	        (void**)&pConfig
-	    );
-	    
-	    if (hr == S_OK)
-	    {
-	        AM_MEDIA_TYPE *pmt;
-	        VIDEO_STREAM_CONFIG_CAPS scc;
-	        hr = pConfig->GetFormat(&pmt);
-	        if (hr == S_OK)
-	        {
-	            VIDEOINFOHEADER *pvih = (VIDEOINFOHEADER*)pmt->pbFormat;
-	            pvih->bmiHeader.biWidth = desired_width;
-	            pvih->bmiHeader.biHeight = desired_height;
-	            hr = pConfig->SetFormat(pmt);
-	            DeleteMediaType(pmt);
-	        }
-	        pConfig->Release();
-	    }
-	}
+// Add before RenderStream, after creating pCap
+if (desired_width > 0 && desired_height > 0)
+{
+    IAMStreamConfig *pConfig = NULL;
+    hr = pBuilder->FindInterface(
+        &PIN_CATEGORY_CAPTURE,
+        &MEDIATYPE_Video,
+        pCap,
+        IID_IAMStreamConfig,
+        (void**)&pConfig
+    );
+    
+    if (hr == S_OK)
+    {
+        int iCount = 0, iSize = 0;
+        hr = pConfig->GetNumberOfCapabilities(&iCount, &iSize);
+        fprintf(stderr, "Available format count: %d\n", iCount);
+
+        bool formatSet = false;
+        // Enumerate formats until we find our desired resolution
+        for (int i = 0; i < iCount && !formatSet; i++)
+        {
+            VIDEO_STREAM_CONFIG_CAPS scc;
+            AM_MEDIA_TYPE *pmt = NULL;
+            hr = pConfig->GetStreamCaps(i, &pmt, (BYTE*)&scc);
+            if (hr == S_OK && pmt != NULL)
+            {
+                if (pmt->formattype == FORMAT_VideoInfo)
+                {
+                    VIDEOINFOHEADER *pvih = (VIDEOINFOHEADER*)pmt->pbFormat;
+                    fprintf(stderr, "Format %d: %dx%d\n", 
+                            i, 
+                            pvih->bmiHeader.biWidth,
+                            pvih->bmiHeader.biHeight);
+                    
+                    if (pvih->bmiHeader.biWidth == desired_width && 
+                        pvih->bmiHeader.biHeight == desired_height)
+                    {
+                        hr = pConfig->SetFormat(pmt);
+                        fprintf(stderr, "Setting format %d (%dx%d): %s\n",
+                                i,
+                                desired_width, desired_height,
+                                (hr == S_OK) ? "Success" : "Failed");
+                        if (hr == S_OK) formatSet = true;
+                    }
+                }
+                DeleteMediaType(pmt);
+            }
+        }
+        pConfig->Release();
+    }
+}
+
+// Then continue with RenderStream...
+	
+	
 	
 	// Connect up the filter graph's capture stream
 	hr = pBuilder->RenderStream(
